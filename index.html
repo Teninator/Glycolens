@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>GlycoLens | Diabetes Vision</title>
+    <style>
+        :root { --primary: #10b981; --bg: #0f172a; --sidebar: #1e293b; --text: #f8fafc; --dim: #94a3b8; --warn: #ef4444; }
+        * { box-sizing: border-box; transition: 0.2s ease; }
+        body { background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; display: flex; height: 100vh; margin: 0; overflow: hidden; }
+        
+        /* SIDEBAR / HISTORY DRAWER */
+        #sidebar { width: 320px; background: var(--sidebar); border-right: 1px solid rgba(255,255,255,0.1); display: flex; flex-direction: column; }
+        .sidebar-header { padding: 30px 20px; font-size: 1.5rem; font-weight: 800; color: var(--primary); }
+        
+        .settings-panel { padding: 20px; background: rgba(0,0,0,0.2); border-bottom: 1px solid rgba(255,255,255,0.05); }
+        .unit-toggle { display: flex; background: #0f172a; border-radius: 8px; padding: 4px; margin-bottom: 15px; }
+        .unit-toggle button { flex:1; padding: 6px; font-size: 0.7rem; background: transparent; border:none; color:white; border-radius: 6px; cursor:pointer; }
+        .unit-toggle button.active { background: var(--primary); }
+
+        #historyContainer { flex: 1; overflow-y: auto; padding: 20px; }
+        .history-card { background: rgba(255,255,255,0.03); padding: 15px; border-radius: 12px; margin-bottom: 12px; cursor: pointer; border: 1px solid transparent; }
+        .history-card:hover { background: rgba(255,255,255,0.07); border-color: var(--primary); }
+
+        .input-group { margin-bottom: 12px; }
+        .input-group label { display: block; font-size: 0.7rem; color: var(--dim); margin-bottom: 4px; }
+        .input-group input { width: 100%; background: #0f172a; border: 1px solid #334155; color: white; padding: 8px; border-radius: 6px; }
+
+        /* MAIN CONTENT */
+        #main { flex: 1; display: flex; flex-direction: column; align-items: center; padding: 20px 40px; overflow-y: auto; }
+        .medical-warning { background: rgba(239, 68, 68, 0.15); border: 1px solid var(--warn); color: #fca5a5; padding: 12px; border-radius: 10px; font-size: 0.8rem; margin-bottom: 20px; width: 100%; max-width: 550px; text-align: center; }
+        .glass-card { background: rgba(30, 41, 59, 0.7); border: 1px solid rgba(255,255,255,0.1); border-radius: 24px; padding: 35px; width: 100%; max-width: 550px; backdrop-filter: blur(10px); box-shadow: 0 20px 40px rgba(0,0,0,0.4); }
+        
+        #previewImg { width: 100%; border-radius: 16px; display: none; margin-bottom: 20px; border: 1px solid #334155; }
+        .action-btn { width: 100%; padding: 16px; background: var(--primary); color: white; border: none; border-radius: 12px; font-weight: 700; cursor: pointer; font-size: 1rem; }
+        
+        .result-item { background: rgba(15, 23, 42, 0.5); padding: 15px; border-radius: 12px; margin-top: 10px; border-left: 4px solid var(--primary); display: flex; justify-content: space-between; align-items: center; }
+        .score-box { margin-top: 25px; padding: 20px; background: #0f172a; border-radius: 15px; display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
+        .risk-tag { grid-column: span 2; text-align: center; padding: 10px; border-radius: 8px; font-weight: 900; }
+        
+        .bolus-calc { background: rgba(16, 185, 129, 0.05); border: 1px dashed var(--primary); padding: 20px; border-radius: 16px; margin-top: 20px; }
+        
+        .low { color: #10b981; } .moderate { color: #f59e0b; } .high { color: #ef4444; }
+        .bg-low { background: rgba(16, 185, 129, 0.1); } .bg-moderate { background: rgba(245, 158, 11, 0.1); } .bg-high { background: rgba(239, 68, 68, 0.1); }
+    </style>
+</head>
+<body>
+    <div id="sidebar">
+        <div class="sidebar-header">GlycoLens</div>
+        <div class="settings-panel">
+            <small style="color:var(--primary); font-weight:bold;">USER BIOMETRICS</small>
+            <div class="unit-toggle" id="unitSwitch">
+                <button id="btnMg" class="active" onclick="setUnit('mgdl')">mg/dL</button>
+                <button id="btnMmol" onclick="setUnit('mmol')">mmol/L</button>
+            </div>
+            <div class="input-group"><label id="ratioLabel">Carb Ratio (1u : 10g)</label><input type="number" id="u_ratio" value="10"></div>
+            <div class="input-group"><label id="isfLabel">Sensitivity (1u : 50 mg/dL)</label><input type="number" id="u_isf" value="50"></div>
+        </div>
+        <div id="historyContainer"></div>
+    </div>
+
+    <div id="main">
+        <div class="medical-warning">⚠️ <b>MEDICAL DISCLAIMER:</b> Estimates only. Tool may be innacurate, please use your own discretion. Consult your doctor before dosing insulin.</div>
+        <div class="glass-card">
+            <h2 style="margin:0 0 10px 0">Meal Vision Analyzer</h2>
+            <p style="color:var(--dim); margin-bottom:20px; font-size:0.9rem">YOLOv8 + Glycemic Load Logic</p>
+            <input type="file" id="fileIn" accept="image/*" style="margin-bottom:20px; color:var(--dim); font-size:0.8rem">
+            <img id="previewImg">
+            <button id="scanBtn" class="action-btn">Scan Plate</button>
+            <div id="outputArea"></div>
+        </div>
+    </div>
+
+    <script>
+        const fileIn = document.getElementById('fileIn'), previewImg = document.getElementById('previewImg'), scanBtn = document.getElementById('scanBtn'), outputArea = document.getElementById('outputArea'), historyContainer = document.getElementById('historyContainer');
+        
+        let logs = JSON.parse(localStorage.getItem('glym_history')) || [];
+        let currentCarbs = 0;
+        let currentUnit = 'mgdl';
+
+        renderHistory();
+
+        function setUnit(unit) {
+            currentUnit = unit;
+            document.getElementById('btnMg').classList.toggle('active', unit === 'mgdl');
+            document.getElementById('btnMmol').classList.toggle('active', unit === 'mmol');
+            if(unit === 'mmol') {
+                document.getElementById('isfLabel').innerText = "Sensitivity (1u : ? mmol/L)";
+                document.getElementById('u_isf').value = 2.8;
+            } else {
+                document.getElementById('isfLabel').innerText = "Sensitivity (1u : ? mg/dL)";
+                document.getElementById('u_isf').value = 50;
+            }
+        }
+
+        fileIn.onchange = () => { if(fileIn.files[0]){ previewImg.src = URL.createObjectURL(fileIn.files[0]); previewImg.style.display='block'; } };
+
+        scanBtn.onclick = async () => {
+            if(!fileIn.files[0]) return alert("Select image");
+            const form = new FormData(); form.append('file', fileIn.files[0]);
+            scanBtn.innerText = "Analyzing...";
+            try {
+                const r = await fetch('http://127.0.0.1:8000/analyze', { method:'POST', body:form });
+                const d = await r.json();
+                d.time = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                d.cachedImg = previewImg.src;
+                logs.unshift(d);
+                localStorage.setItem('glym_history', JSON.stringify(logs.slice(0, 10)));
+                currentCarbs = d.total_carbs;
+                renderHistory();
+                renderMain(d);
+            } catch(e) { alert("Backend Offline"); }
+            finally { scanBtn.innerText = "Scan Plate"; }
+        };
+
+        function renderHistory() {
+            historyContainer.innerHTML = logs.map((l, i) => `
+                <div class="history-card" onclick="loadLog(${i})">
+                    <span style="color:var(--primary); font-weight:800;">SCAN #${l.id}</span><br>
+                    <small style="color:var(--dim)">${l.time} • ${l.total_carbs}g Carbs</small>
+                </div>`).join('') || '<p style="text-align:center;color:var(--dim)">No scans yet</p>';
+        }
+
+        function loadLog(i) {
+            const l = logs[i]; currentCarbs = l.total_carbs;
+            if(l.cachedImg) { previewImg.src = l.cachedImg; previewImg.style.display = 'block'; }
+            renderMain(l);
+        }
+
+        function renderMain(d) {
+            let items = d.foods.map(f => `
+                <div class="result-item" style="${!f.is_food ? 'opacity:0.4; border-left-color:#64748b' : ''}">
+                    <div><b>${f.name.toUpperCase()}</b><br><small>${f.is_food ? 'Match: '+(f.confidence*100)+'%' : 'Background Object'}</small></div>
+                    <div style="text-align:right"><b>${f.is_food ? f.carbs+'g' : '--'}</b></div>
+                </div>`).join('');
+            
+            outputArea.innerHTML = `
+                <div style="margin-top:20px">${items}
+                    <div class="score-box">
+                        <div><small style="color:var(--dim)">TOTAL CARBS</small><br><b>${d.total_carbs}g</b></div>
+                        <div><small style="color:var(--dim)">GL LOAD</small><br><b>${d.glycemic_load}</b></div>
+                        <div class="risk-tag bg-${d.risk.toLowerCase()} ${d.risk.toLowerCase()}">${d.risk.toUpperCase()} RISK</div>
+                    </div>
+                    <div class="bolus-calc">
+                        <p style="margin:0 0 10px 0; font-size:0.8rem; font-weight:bold">BOLUS CALCULATOR</p>
+                        <div class="input-group"><label>Current Sugar (${currentUnit})</label><input type="number" id="curBG"></div>
+                        <button onclick="getBolus()" style="padding:10px; font-size:0.8rem; border-radius:8px; border:none; background:var(--primary); color:white; width:100%; cursor:pointer">Get Suggestion</button>
+                        <div id="bolusRes" style="margin-top:15px; text-align:center; font-weight:bold; color:var(--primary)"></div>
+                    </div>
+                </div>`;
+        }
+
+        async function getBolus() {
+            const bg = document.getElementById('curBG').value;
+            if(!bg) return;
+            const target = (currentUnit === 'mgdl') ? 100 : 5.5;
+            const r = await fetch('http://127.0.0.1:8000/calculate_bolus', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    total_carbs: currentCarbs, current_bg: parseFloat(bg), target_bg: target,
+                    carb_ratio: parseFloat(document.getElementById('u_ratio').value),
+                    sensitivity_factor: parseFloat(document.getElementById('u_isf').value)
+                })
+            });
+            const res = await r.json();
+            document.getElementById('bolusRes').innerHTML = `Suggested Dose: ${res.total_units} Units<br><small style="color:var(--dim); font-weight:normal">Meal: ${res.food_units}u | Correct: ${res.correction_units}u</small>`;
+        }
+    </script>
+</body>
+</html>
